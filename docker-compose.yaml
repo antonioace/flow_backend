@@ -1,0 +1,24 @@
+services:
+  api:
+    build: .
+    ports:
+      - '127.0.0.1:${PORT:-3001}:3001'
+    env_file:
+      - .env
+    volumes:
+      - ./data:/usr/src/app/database
+    restart: always
+    networks:
+      - web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.remido-back.rule=Host(`remidobackend.hecainnova.com`)'
+      - 'traefik.http.routers.remido-back.entrypoints=websecure'
+      - 'traefik.http.routers.remido-back.tls.certresolver=myresolver'
+      - 'traefik.http.services.remido-back.loadbalancer.server.port=3001'
+
+volumes:
+  data:
+networks:
+  web:
+    external: true
