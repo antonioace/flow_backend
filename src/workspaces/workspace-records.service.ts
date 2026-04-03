@@ -17,6 +17,10 @@ export interface InternalRecord {
   [key: string]: unknown;
 }
 
+interface JsonbRecordResult {
+  record: InternalRecord | null;
+}
+
 @Injectable()
 export class WorkspaceRecordsService {
   private readonly logger = new Logger(WorkspaceRecordsService.name);
@@ -88,18 +92,17 @@ export class WorkspaceRecordsService {
     }
   }
 
-  // ─── Acciones internas ──────────────────────────────────────────
+  // ─── Acciones internas (QueryBuilder + funciones JSONB de PostgreSQL) ───
 
+  /**
+   * CREATE: Usa QueryBuilder .update().set() con el operador JSONB || para
+   * concatenar atómicamente. Si no existe la fila, usa .insert().
+   */
   private async createRecord(
     workspaceId: string,
     collectionId: string,
     data: Record<string, unknown>,
   ) {
-    // Buscar si ya existe un registro para esta colección en este workspace
-    let record = await this.recordRepo.findOne({
-      where: { workspaceId, collectionId },
-    });
-
     const newEntry: InternalRecord = {
       _id: randomUUID(),
       ...data,
@@ -107,22 +110,31 @@ export class WorkspaceRecordsService {
       _updatedAt: new Date().toISOString(),
     };
 
-    if (record) {
-      // Agregar al array de records existente
-      const currentRecords = Array.isArray(record.records)
-        ? (record.records as InternalRecord[])
-        : [];
-      currentRecords.push(newEntry);
-      record.records = currentRecords;
-      await this.recordRepo.save(record);
-    } else {
-      // Crear nuevo registro para esta colección
-      record = this.recordRepo.create({
-        workspaceId,
-        collectionId,
-        records: [newEntry],
-      });
-      await this.recordRepo.save(record);
+    // Append atómico con operador || de JSONB via QueryBuilder
+    const result = await this.recordRepo
+      .createQueryBuilder()
+      .update(WorkspaceRecord)
+      .set({
+        records: () => `COALESCE("records", '[]'::jsonb) || :newEntry::jsonb`,
+      })
+      .setParameter('newEntry', JSON.stringify([newEntry]))
+      .where('"workspaceId" = :workspaceId', { workspaceId })
+      .andWhere('"collectionId" = :collectionId', { collectionId })
+      .execute();
+
+    if (result.affected === 0) {
+      // No existe la fila → crear con insert del QueryBuilder
+      await this.recordRepo
+        .createQueryBuilder()
+        .insert()
+        .into(WorkspaceRecord)
+        .values({
+          workspaceId,
+          collectionId,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          records: [newEntry] as any,
+        })
+        .execute();
     }
 
     this.logger.log(
@@ -137,32 +149,61 @@ export class WorkspaceRecordsService {
     };
   }
 
+  /**
+   * UPDATE: Usa QueryBuilder .update().set() con jsonb_agg(CASE WHEN ...)
+   * para modificar un elemento del array atómicamente en PostgreSQL.
+   * Luego recupera el elemento actualizado con un select + jsonb_array_elements.
+   */
   private async updateRecord(
     workspaceId: string,
     collectionId: string,
     idRecord: string,
     data: Record<string, unknown>,
   ) {
-    const record = await this.findCollectionRecord(workspaceId, collectionId);
-    const records: InternalRecord[] = Array.isArray(record.records)
-      ? (record.records as InternalRecord[])
-      : [];
+    const now = new Date().toISOString();
 
-    const index = records.findIndex((r) => r._id === idRecord);
-    if (index === -1) {
+    // Actualización atómica: jsonb_agg + CASE dentro de .set()
+    const result = await this.recordRepo
+      .createQueryBuilder()
+      .update(WorkspaceRecord)
+      .set({
+        records: () =>
+          `(SELECT jsonb_agg(
+              CASE
+                WHEN elem->>'_id' = :idRecord
+                THEN (elem || :data::jsonb) || jsonb_build_object('_id', :idRecord::text, '_updatedAt', :now::text)
+                ELSE elem
+              END
+            )
+            FROM jsonb_array_elements("records") AS elem)`,
+      })
+      .setParameter('idRecord', idRecord)
+      .setParameter('data', JSON.stringify(data))
+      .setParameter('now', now)
+      .where('"workspaceId" = :workspaceId', { workspaceId })
+      .andWhere('"collectionId" = :collectionId', { collectionId })
+      .andWhere(
+        `EXISTS (SELECT 1 FROM jsonb_array_elements("records") AS e WHERE e->>'_id' = :idRecord)`,
+      )
+      .execute();
+
+    if (result.affected === 0) {
       throw new NotFoundException(
         `Record con id "${idRecord}" no encontrado en la colección "${collectionId}".`,
       );
     }
 
-    records[index] = {
-      ...records[index],
-      ...data,
-      _id: idRecord, // Mantener el id original
-      _updatedAt: new Date().toISOString(),
-    };
-    record.records = records;
-    await this.recordRepo.save(record);
+    // Obtener el elemento actualizado con select + jsonb_array_elements
+    const updated = await this.recordRepo
+      .createQueryBuilder('wr')
+      .select(
+        `(SELECT elem FROM jsonb_array_elements(wr.records) AS elem WHERE elem->>'_id' = :idRecord LIMIT 1)`,
+        'record',
+      )
+      .where('wr.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('wr.collectionId = :collectionId', { collectionId })
+      .setParameter('idRecord', idRecord)
+      .getRawOne<JsonbRecordResult>();
 
     this.logger.log(
       `Record "${idRecord}" actualizado en colección "${collectionId}"`,
@@ -172,30 +213,51 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'update',
       message: 'Record actualizado exitosamente.',
-      data: records[index],
+      data: updated?.record,
     };
   }
 
+  /**
+   * DELETE: Primero extrae el elemento a eliminar con select + jsonb_array_elements,
+   * luego usa QueryBuilder .update().set() con jsonb_agg filtrando el _id.
+   */
   private async deleteRecord(
     workspaceId: string,
     collectionId: string,
     idRecord: string,
   ) {
-    const record = await this.findCollectionRecord(workspaceId, collectionId);
-    const records: InternalRecord[] = Array.isArray(record.records)
-      ? (record.records as InternalRecord[])
-      : [];
+    // Obtener el elemento antes de eliminarlo
+    const toDelete = await this.recordRepo
+      .createQueryBuilder('wr')
+      .select(
+        `(SELECT elem FROM jsonb_array_elements(wr.records) AS elem WHERE elem->>'_id' = :idRecord LIMIT 1)`,
+        'record',
+      )
+      .where('wr.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('wr.collectionId = :collectionId', { collectionId })
+      .setParameter('idRecord', idRecord)
+      .getRawOne<JsonbRecordResult>();
 
-    const index = records.findIndex((r) => r._id === idRecord);
-    if (index === -1) {
+    if (!toDelete?.record) {
       throw new NotFoundException(
         `Record con id "${idRecord}" no encontrado en la colección "${collectionId}".`,
       );
     }
 
-    const deleted = records.splice(index, 1)[0];
-    record.records = records;
-    await this.recordRepo.save(record);
+    // Eliminación atómica: jsonb_agg filtrando el elemento
+    await this.recordRepo
+      .createQueryBuilder()
+      .update(WorkspaceRecord)
+      .set({
+        records: () =>
+          `(SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+            FROM jsonb_array_elements("records") AS elem
+            WHERE elem->>'_id' != :idRecord)`,
+      })
+      .setParameter('idRecord', idRecord)
+      .where('"workspaceId" = :workspaceId', { workspaceId })
+      .andWhere('"collectionId" = :collectionId', { collectionId })
+      .execute();
 
     this.logger.log(
       `Record "${idRecord}" eliminado de colección "${collectionId}"`,
@@ -205,22 +267,31 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'delete',
       message: 'Record eliminado exitosamente.',
-      data: deleted,
+      data: toDelete.record,
     };
   }
 
+  /**
+   * GET: Usa QueryBuilder .select() con una subquery de jsonb_array_elements
+   * para extraer un único elemento sin traer el array completo.
+   */
   private async getRecord(
     workspaceId: string,
     collectionId: string,
     idRecord: string,
   ) {
-    const record = await this.findCollectionRecord(workspaceId, collectionId);
-    const records: InternalRecord[] = Array.isArray(record.records)
-      ? (record.records as InternalRecord[])
-      : [];
+    const result = await this.recordRepo
+      .createQueryBuilder('wr')
+      .select(
+        `(SELECT elem FROM jsonb_array_elements(wr.records) AS elem WHERE elem->>'_id' = :idRecord LIMIT 1)`,
+        'record',
+      )
+      .where('wr.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('wr.collectionId = :collectionId', { collectionId })
+      .setParameter('idRecord', idRecord)
+      .getRawOne<JsonbRecordResult>();
 
-    const found = records.find((r) => r._id === idRecord);
-    if (!found) {
+    if (!result?.record) {
       throw new NotFoundException(
         `Record con id "${idRecord}" no encontrado en la colección "${collectionId}".`,
       );
@@ -230,10 +301,14 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'obtener',
       message: 'Record obtenido exitosamente.',
-      data: found,
+      data: result.record,
     };
   }
 
+  /**
+   * GET_ALL: Obtiene todos los records. Se mantiene con findOne
+   * ya que necesita el array completo de todas formas.
+   */
   private async getAllRecords(workspaceId: string, collectionId: string) {
     const record = await this.recordRepo.findOne({
       where: { workspaceId, collectionId },
@@ -250,24 +325,5 @@ export class WorkspaceRecordsService {
       message: `Se obtuvieron ${records.length} records de la colección "${collectionId}".`,
       data: records,
     };
-  }
-
-  // ─── Helpers ────────────────────────────────────────────────────
-
-  private async findCollectionRecord(
-    workspaceId: string,
-    collectionId: string,
-  ): Promise<WorkspaceRecord> {
-    const record = await this.recordRepo.findOne({
-      where: { workspaceId, collectionId },
-    });
-
-    if (!record) {
-      throw new NotFoundException(
-        `No se encontraron records para la colección "${collectionId}" en el workspace "${workspaceId}".`,
-      );
-    }
-
-    return record;
   }
 }
