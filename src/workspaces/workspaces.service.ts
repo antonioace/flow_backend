@@ -181,7 +181,8 @@ El JSON de salida debe ser un array de colecciones con este formato:
 4. Toda colección debe tener un campo "_id" de tipo "text" con "required": true como primer campo.
 5. Usa nombres de campos en snake_case (ej: nombre_completo), pero debes respetar exactamente los nombres "_id", "_createdAt" y "_updatedAt".
 6. Incluye siempre campos de auditoría: "_createdAt" (date) y "_updatedAt" (date) en cada colección.
-7. Piensa en relaciones realistas y aplica las llaves foraneas pertinentes, ejemplo: usuario_id con many_to_one hacia Usuarios.
+7. **NO generes una colección para 'Usuarios' o 'Users'**, ya que esta entidad ya está definida globalmente en el sistema.
+8. Si necesitas asociar datos a un usuario, crea un campo (ej: 'usuario_id') con una relación 'many_to_one' hacia la colección virtual "Usuarios".
 
 Genera el esquema para la siguiente aplicación descrita por el usuario:
 ${description}`;

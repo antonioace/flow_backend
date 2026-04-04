@@ -1,4 +1,14 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 export enum RecordAction {
   CREATE = 'create',
@@ -6,6 +16,33 @@ export enum RecordAction {
   DELETE = 'delete',
   GET = 'get',
   GET_ALL = 'getAll',
+}
+
+export class ConditionalActionDto {
+  @IsString()
+  @IsNotEmpty()
+  field: string;
+
+  @IsString()
+  @IsNotEmpty()
+  operator: string;
+
+  @IsOptional()
+  value?: any;
+}
+
+export class PaginationDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  page?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  limit?: number;
 }
 
 export class RecordActionDto {
@@ -25,4 +62,14 @@ export class RecordActionDto {
 
   @IsOptional()
   data?: unknown;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ConditionalActionDto)
+  conditionals?: ConditionalActionDto[];
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PaginationDto)
+  pagination?: PaginationDto;
 }

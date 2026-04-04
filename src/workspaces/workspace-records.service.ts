@@ -7,7 +7,12 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
-import { RecordAction, RecordActionDto } from './dto/record-action.dto';
+import {
+  ConditionalActionDto,
+  PaginationDto,
+  RecordAction,
+  RecordActionDto,
+} from './dto/record-action.dto';
 import { WorkspaceRecord } from './entities/workspace-record.entity';
 
 export interface InternalRecord {
@@ -42,6 +47,7 @@ export class WorkspaceRecordsService {
     action: string;
     message: string;
     data?: unknown;
+    meta?: unknown;
   }> {
     const { action, idCollection, idRecord, data } = dto;
 
@@ -83,7 +89,12 @@ export class WorkspaceRecordsService {
         return this.getRecord(workspaceId, idCollection, idRecord);
 
       case RecordAction.GET_ALL:
-        return this.getAllRecords(workspaceId, idCollection);
+        return this.getAllRecords(
+          workspaceId,
+          idCollection,
+          dto.conditionals,
+          dto.pagination,
+        );
 
       default:
         throw new BadRequestException(
@@ -306,24 +317,89 @@ export class WorkspaceRecordsService {
   }
 
   /**
-   * GET_ALL: Obtiene todos los records. Se mantiene con findOne
-   * ya que necesita el array completo de todas formas.
+   * GET_ALL: Obtiene todos los records y aplica filtros opcionales.
+   * Se mantiene con findOne ya que necesita extraer y filtrar el array completo.
    */
-  private async getAllRecords(workspaceId: string, collectionId: string) {
+  private async getAllRecords(
+    workspaceId: string,
+    collectionId: string,
+    conditionals?: ConditionalActionDto[],
+    pagination?: PaginationDto,
+  ) {
     const record = await this.recordRepo.findOne({
       where: { workspaceId, collectionId },
     });
 
-    const records =
+    let records =
       record && Array.isArray(record.records)
         ? (record.records as InternalRecord[])
         : [];
+
+    if (conditionals && conditionals.length > 0) {
+      records = records.filter((r) => {
+        return conditionals.every((condition) => {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          const { field, operator, value } = condition;
+          const actualVal = r[field];
+
+          // Manejo de valores nulos o indefinidos
+          if (actualVal === undefined || actualVal === null) {
+            return operator === 'not_equals';
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-base-to-string
+          const actualStr = String(actualVal);
+          const expectedStr = String(value);
+
+          switch (operator) {
+            case 'equals':
+              return actualStr === expectedStr;
+            case 'not_equals':
+              return actualStr !== expectedStr;
+            case 'contains':
+              return actualStr.includes(expectedStr);
+            case 'starts_with':
+              return actualStr.startsWith(expectedStr);
+            case 'ends_with':
+              return actualStr.endsWith(expectedStr);
+            case 'greater_than':
+              return Number(actualStr) > Number(expectedStr);
+            case 'less_than':
+              return Number(actualStr) < Number(expectedStr);
+            case 'greater_equal':
+              return Number(actualStr) >= Number(expectedStr);
+            case 'less_equal':
+              return Number(actualStr) <= Number(expectedStr);
+            case 'before':
+              return new Date(actualStr) < new Date(expectedStr);
+            case 'after':
+              return new Date(actualStr) > new Date(expectedStr);
+            default:
+              return false;
+          }
+        });
+      });
+    }
+
+    const totalFiltered = records.length;
+
+    if (pagination) {
+      const page = pagination.page || 1;
+      const limit = pagination.limit || 10;
+      const startIndex = (page - 1) * limit;
+      records = records.slice(startIndex, startIndex + limit);
+    }
 
     return {
       success: true,
       action: 'obtenerTodos',
       message: `Se obtuvieron ${records.length} records de la colección "${collectionId}".`,
       data: records,
+      meta: {
+        total: totalFiltered,
+        page: pagination?.page || 1,
+        limit: pagination?.limit || totalFiltered,
+      },
     };
   }
 }
