@@ -16,6 +16,7 @@ export enum RecordAction {
   DELETE = 'delete',
   GET = 'get',
   GET_ALL = 'getAll',
+  BULK_INSERT = 'bulkInsert',
 }
 
 export class ConditionalActionDto {

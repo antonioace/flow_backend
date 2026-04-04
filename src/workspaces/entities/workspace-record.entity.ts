@@ -1,4 +1,10 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 
 @Entity('workspace_records')
 export class WorkspaceRecord {
@@ -11,9 +17,12 @@ export class WorkspaceRecord {
   @Column()
   collectionId: string;
 
-  @Column({ type: 'jsonb', nullable: true })
-  records: any;
+  @Column({ type: 'jsonb', default: {} })
+  data: any;
 
-  @Column({ default: true })
-  isActive: boolean;
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 }
