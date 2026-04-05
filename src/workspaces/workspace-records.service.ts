@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import {
   ConditionalActionDto,
   PaginationDto,
@@ -375,7 +376,7 @@ export class WorkspaceRecordsService {
 
     const entities = data.map((item) => {
       const id = randomUUID();
-      return this.recordRepo.create({
+      return {
         id,
         workspaceId,
         collectionId,
@@ -385,10 +386,12 @@ export class WorkspaceRecordsService {
           _createdAt: now,
           _updatedAt: now,
         },
-      });
+      };
     });
 
-    await this.recordRepo.insert(entities);
+    await this.recordRepo.insert(
+      entities as unknown as QueryDeepPartialEntity<WorkspaceRecord>[],
+    );
 
     this.logger.log(
       `Inserción masiva de ${entities.length} records en "${collectionId}" del workspace "${workspaceId}"`,

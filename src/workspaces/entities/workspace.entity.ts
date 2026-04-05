@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { CollectionNode } from '../interfaces/collection-node.interface';
 
 @Entity('workspaces')
 export class Workspace {
@@ -34,7 +35,7 @@ export class Workspace {
   user: User;
 
   @Column({ nullable: true, type: 'json' })
-  nodes?: any;
+  nodes?: CollectionNode[];
 
   @Column({ nullable: true, type: 'json' })
   edges?: any;

@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OpenaiService } from '../openai/openai.service';
@@ -25,6 +26,7 @@ export class WorkspacesService {
     @InjectRepository(WorkspaceHistory)
     private readonly historyRepo: Repository<WorkspaceHistory>,
     private readonly openaiService: OpenaiService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ─── Workspace CRUD ─────────────────────────────────────────────
@@ -233,6 +235,14 @@ ${description}`;
       const parsedData: Record<string, unknown> = JSON.parse(
         jsonString,
       ) as Record<string, unknown>;
+
+      // Emitir evento para el logger asíncrono
+      this.eventEmitter.emit('schema.generated', {
+        description,
+        prompt: systemPrompt,
+        response: result.response,
+      });
+
       return parsedData;
     } catch (error) {
       this.logger.error('Error al generar el esquema con OpenAI', error);
