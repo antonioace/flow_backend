@@ -14,7 +14,7 @@ dayjs.locale('es');
 export interface OpenAIResult {
   success: boolean;
   response?: string;
-  data?: any;
+  data?: unknown;
   error?: string;
   usage?: {
     prompt_tokens: number;
@@ -70,7 +70,7 @@ export class OpenaiService {
     tz?: string,
   ): Promise<OpenAIResult> {
     try {
-      const messages: any[] = [];
+      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
 
       // Agregar contexto de fecha actual
       const currentDate = this.getCurrentDate(tz);
@@ -90,7 +90,7 @@ export class OpenaiService {
       const completion = await this.openai.chat.completions.create({
         model,
         messages,
-        max_tokens: 1500,
+        max_tokens: 4000,
         temperature: 0.7,
       });
 
@@ -104,11 +104,13 @@ export class OpenaiService {
         data: completion,
         usage: completion.usage,
       };
-    } catch (error: any) {
-      this.logger.error('Error al generar respuesta:', error.message);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error('Error al generar respuesta:', errorMessage);
       return {
         success: false,
-        error: error.message,
+        error: errorMessage,
       };
     }
   }
@@ -153,7 +155,7 @@ export class OpenaiService {
       const completion = await this.openai.chat.completions.create({
         model,
         messages: messagesWithContext,
-        max_tokens: 1500,
+        max_tokens: 4000,
         temperature: 0.7,
       });
 
@@ -167,11 +169,13 @@ export class OpenaiService {
         data: completion,
         usage: completion.usage,
       };
-    } catch (error: any) {
-      this.logger.error('Error al generar respuesta de chat:', error.message);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error('Error al generar respuesta de chat:', errorMessage);
       return {
         success: false,
-        error: error.message,
+        error: errorMessage,
       };
     }
   }
@@ -236,11 +240,13 @@ Responde SOLO con el JSON, sin texto adicional.`;
         response: transcription.text,
         data: transcription,
       };
-    } catch (error: any) {
-      this.logger.error('Error al transcribir audio:', error.message);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error('Error al transcribir audio:', errorMessage);
       return {
         success: false,
-        error: error.message,
+        error: errorMessage,
       };
     }
   }
@@ -252,8 +258,10 @@ Responde SOLO con el JSON, sin texto adicional.`;
     try {
       await this.openai.models.list();
       return true;
-    } catch (error: any) {
-      this.logger.error('OpenAI no está disponible:', error.message);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error('OpenAI no está disponible:', errorMessage);
       return false;
     }
   }

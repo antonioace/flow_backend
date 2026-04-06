@@ -10,6 +10,7 @@ import {
 import { Audio } from '../../audio/entities/audio.entity';
 import { File } from '../../files/entities/file.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
+import { WorkspaceRecord } from '../../workspaces/entities/workspace-record.entity';
 
 @Entity('users')
 export class User {
@@ -46,6 +47,9 @@ export class User {
 
   @OneToMany(() => Audio, (audio) => audio.user)
   audios: Audio[];
+
+  @OneToMany(() => WorkspaceRecord, (record) => record.user)
+  workspaceRecords: WorkspaceRecord[];
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

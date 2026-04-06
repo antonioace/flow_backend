@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 import { WorkspaceRecordRelation } from './workspace-record-relation.entity';
 import { Workspace } from './workspace.entity';
 
@@ -27,7 +28,14 @@ export class WorkspaceRecord {
   collectionId: string;
 
   @Column({ type: 'jsonb', default: {} })
-  data: any;
+  data: unknown;
+
+  @Column({ nullable: true })
+  userId?: string;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'userId' })
+  user?: User;
 
   @OneToMany(() => WorkspaceRecordRelation, (relation) => relation.targetRecord)
   targetRelations: WorkspaceRecordRelation[];

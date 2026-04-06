@@ -9,10 +9,12 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OpenaiService } from '../openai/openai.service';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { CreateWorkspaceHistoryDto } from './dto/create-workspace-history.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { GenerateSchemaDto } from './dto/generate-schema.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
+import { AISchemaLog } from './entities/ai-schema-log.entity';
 import { WorkspaceHistory } from './entities/workspace-history.entity';
 import { Workspace } from './entities/workspace.entity';
 
@@ -25,6 +27,8 @@ export class WorkspacesService {
     private readonly workspaceRepo: Repository<Workspace>,
     @InjectRepository(WorkspaceHistory)
     private readonly historyRepo: Repository<WorkspaceHistory>,
+    @InjectRepository(AISchemaLog)
+    private readonly aiSchemaLogRepo: Repository<AISchemaLog>,
     private readonly openaiService: OpenaiService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -161,7 +165,8 @@ El JSON de salida debe ser un array de colecciones con este formato:
           "relation": null | {
             "targetCollection": "Nombre de la colección destino",
             "type": "one_to_one | one_to_many | many_to_one"
-          }
+          },
+          "isUser": true/false
         }
       ]
     }
@@ -181,10 +186,13 @@ El JSON de salida debe ser un array de colecciones con este formato:
    - Si tiene relación, targetCollection debe ser el label exacto de otra colección del esquema
    - Los tipos de relación son: "one_to_one", "one_to_many", "many_to_one"
 4. Toda colección debe tener un campo "_id" de tipo "text" con "required": true como primer campo.
-5. Usa nombres de campos en snake_case (ej: nombre_completo), pero debes respetar exactamente los nombres "_id", "_createdAt" y "_updatedAt".
-6. Incluye siempre campos de auditoría: "_createdAt" (date) y "_updatedAt" (date) en cada colección.
-7. **NO generes una colección para 'Usuarios' o 'Users'**, ya que esta entidad ya está definida globalmente en el sistema.
-8. Si necesitas asociar datos a un usuario, crea un campo (ej: 'usuario_id') con una relación 'many_to_one' hacia la colección virtual "Usuarios".
+5. Usa nombres de campos (propiedad "name") siempre en INGLÉS y en snake_case (ej: "full_name"), pero debes respetar exactamente los nombres "_id", "_createdAt" y "_updatedAt".
+6. Los campos "label" y "description" deben estar siempre en ESPAÑOL.
+7. Incluye siempre campos de auditoría: "_createdAt" (date) y "_updatedAt" (date) en cada colección.
+8. **NO generes una colección para 'Usuarios' o 'Users'**, ya que esta entidad ya está definida globalmente en el sistema.
+9. Si necesitas asociar datos a un usuario, crea un campo (ej: 'id_user') con una relación 'many_to_one' hacia la colección virtual "Usuarios".
+10. Las llaves foráneas (campos que tienen una relación) deben empezar SIEMPRE con el prefijo "id_" seguido del nombre de la entidad en inglés (ej: "id_category", "id_product").
+11. Si un campo es una relación hacia la colección virtual "Usuarios", debes establecer la propiedad "isUser": true. Para cualquier otro tipo de campo, omítelo o establécelo en false.
 
 Genera el esquema para la siguiente aplicación descrita por el usuario:
 ${description}`;
@@ -214,7 +222,8 @@ ${description}`;
           "relation": {
             "targetCollection": "string",
             "type": "one_to_one | one_to_many | many_to_one"
-          }
+          },
+          "isUser": "boolean (opcional)"
         }
       ]
     }
@@ -250,5 +259,31 @@ ${description}`;
         'No se pudo generar el esquema de base de datos a partir de la descripción.',
       );
     }
+  }
+
+  // ─── AI Schema Logs ─────────────────────────────────────────────
+
+  async getAISchemaLogs(pagination: PaginationDto) {
+    const { page = 1, limit = 10 } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [logs, total] = await this.aiSchemaLogRepo.findAndCount({
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      success: true,
+      data: logs,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+    };
   }
 }

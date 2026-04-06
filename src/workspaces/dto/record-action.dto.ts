@@ -73,4 +73,7 @@ export class RecordActionDto {
   @ValidateNested()
   @Type(() => PaginationDto)
   pagination?: PaginationDto;
+
+  @IsOptional()
+  include?: Record<string, boolean>;
 }

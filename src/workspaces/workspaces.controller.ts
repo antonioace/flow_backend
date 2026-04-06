@@ -8,9 +8,11 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateWorkspaceHistoryDto } from './dto/create-workspace-history.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -41,6 +43,13 @@ export class WorkspacesController {
   @Get()
   findAll(@Request() req: { user: { userId: string } }) {
     return this.workspacesService.findAllByUser(req.user.userId);
+  }
+
+  // ─── AI Schema Logs ─────────────────────────────────────────────
+
+  @Get('ai-schema-logs')
+  getAISchemaLogs(@Query() pagination: PaginationDto) {
+    return this.workspacesService.getAISchemaLogs(pagination);
   }
 
   @Get(':id')

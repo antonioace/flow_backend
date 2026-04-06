@@ -23,6 +23,7 @@ export interface CollectionField {
   type: FieldType;
   validations: FieldValidation;
   relation?: FieldRelation | null;
+  isUser?: boolean;
 }
 
 export interface CollectionNodeData {

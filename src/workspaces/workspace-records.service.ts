@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import {
   ConditionalActionDto,
@@ -14,7 +14,9 @@ import {
   RecordAction,
   RecordActionDto,
 } from './dto/record-action.dto';
+import { WorkspaceRecordRelation } from './entities/workspace-record-relation.entity';
 import { WorkspaceRecord } from './entities/workspace-record.entity';
+import { Workspace } from './entities/workspace.entity';
 
 @Injectable()
 export class WorkspaceRecordsService {
@@ -23,6 +25,10 @@ export class WorkspaceRecordsService {
   constructor(
     @InjectRepository(WorkspaceRecord)
     private readonly recordRepo: Repository<WorkspaceRecord>,
+    @InjectRepository(Workspace)
+    private readonly workspaceRepo: Repository<Workspace>,
+    @InjectRepository(WorkspaceRecordRelation)
+    private readonly relationRepo: Repository<WorkspaceRecordRelation>,
   ) {}
 
   /**
@@ -39,7 +45,7 @@ export class WorkspaceRecordsService {
     data?: unknown;
     meta?: unknown;
   }> {
-    const { action, idCollection, idRecord, data } = dto;
+    const { action, idCollection, idRecord, data, include } = dto;
 
     switch (action) {
       case RecordAction.CREATE:
@@ -84,6 +90,7 @@ export class WorkspaceRecordsService {
           idCollection,
           dto.conditionals,
           dto.pagination,
+          include,
         );
 
       case RecordAction.BULK_INSERT:
@@ -129,6 +136,17 @@ export class WorkspaceRecordsService {
 
     const savedRecord = await this.recordRepo.save(newRecord);
 
+    // Identificar y crear relaciones basadas en el esquema del workspace
+    try {
+      await this.createRelations(workspaceId, collectionId, data, savedRecord);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error desconocido';
+      this.logger.error(
+        `Error al crear relaciones para el record ${id}: ${errorMessage}`,
+      );
+    }
+
     this.logger.log(
       `Record creado en colección "${collectionId}" del workspace "${workspaceId}"`,
     );
@@ -137,7 +155,7 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'create',
       message: 'Record creado exitosamente.',
-      data: savedRecord.data as unknown,
+      data: savedRecord.data,
     };
   }
 
@@ -187,7 +205,7 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'update',
       message: 'Record actualizado exitosamente.',
-      data: updated?.data as unknown,
+      data: updated?.data,
     };
   }
 
@@ -219,7 +237,7 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'delete',
       message: 'Record eliminado exitosamente.',
-      data: toDelete.data as unknown,
+      data: toDelete.data,
     };
   }
 
@@ -245,7 +263,7 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'obtener',
       message: 'Record obtenido exitosamente.',
-      data: record.data as unknown,
+      data: record.data,
     };
   }
 
@@ -258,11 +276,23 @@ export class WorkspaceRecordsService {
     collectionId: string,
     conditionals?: ConditionalActionDto[],
     pagination?: PaginationDto,
+    include?: Record<string, boolean>,
   ) {
     const qb = this.recordRepo
       .createQueryBuilder('record')
       .where('record."workspaceId" = :workspaceId', { workspaceId })
       .andWhere('record."collectionId" = :collectionId', { collectionId });
+
+    // Si hay incluye activos, traemos las relaciones
+    const activeIncludes = include
+      ? Object.entries(include)
+          .filter(([, v]) => v)
+          .map(([k]) => k)
+      : [];
+
+    if (activeIncludes.length > 0) {
+      qb.leftJoinAndSelect('record.targetRelations', 'relation');
+    }
 
     // Filtrado dinámico sobre la columna JSONB "data"
     if (conditionals && conditionals.length > 0) {
@@ -350,11 +380,55 @@ export class WorkspaceRecordsService {
 
     const [records, total] = await qb.getManyAndCount();
 
+    let finalData = records.map((r) => r.data as Record<string, any>);
+
+    // Si hay includes, buscamos los records destino
+    if (activeIncludes.length > 0) {
+      const targetIds = new Set<string>();
+      records.forEach((record) => {
+        record.targetRelations?.forEach((rel) => {
+          if (activeIncludes.includes(rel.targetNameRecord)) {
+            targetIds.add(rel.targetRecordId);
+          }
+        });
+      });
+
+      if (targetIds.size > 0) {
+        const targetRecords = await this.recordRepo.find({
+          where: { id: In([...targetIds]) },
+        });
+
+        const targetDataMap = new Map(
+          targetRecords.map((tr) => [tr.id, tr.data]),
+        );
+
+        finalData = records.map((record) => {
+          const enrichedData = { ...(record.data as Record<string, any>) };
+
+          record.targetRelations?.forEach((rel) => {
+            if (activeIncludes.includes(rel.targetNameRecord)) {
+              const targetData = targetDataMap.get(rel.targetRecordId);
+              if (targetData) {
+                // Key logic: replace /^id_/ or /_id$/ or /^_id/
+                const newKey = rel.targetNameRecord.replace(
+                  /^(id_|_id)|_id$/g,
+                  '',
+                );
+                enrichedData[newKey] = targetData;
+              }
+            }
+          });
+
+          return enrichedData;
+        });
+      }
+    }
+
     return {
       success: true,
       action: 'obtenerTodos',
       message: `Se obtuvieron ${records.length} records de la colección "${collectionId}".`,
-      data: records.map((r) => r.data as unknown),
+      data: finalData,
       meta: {
         total,
         page,
@@ -401,7 +475,65 @@ export class WorkspaceRecordsService {
       success: true,
       action: 'bulkInsert',
       message: `${entities.length} records insertados exitosamente.`,
-      data: entities.map((e) => e.data as unknown),
+      data: entities.map((e) => e.data),
     };
+  }
+
+  /**
+   * Identifica campos de relación en la colección y crea registros en
+   * la tabla de relaciones de records.
+   */
+  private async createRelations(
+    workspaceId: string,
+    collectionId: string,
+    data: Record<string, unknown>,
+    savedRecord: WorkspaceRecord,
+  ) {
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId },
+    });
+
+    if (!workspace || !workspace.nodes) return;
+
+    // Casteamos a CollectionNode para acceder a los campos
+    const nodes = workspace.nodes;
+    const collectionNode = nodes.find((node) => node.id === collectionId);
+
+    if (
+      !collectionNode ||
+      !collectionNode.data ||
+      !collectionNode.data.fields
+    ) {
+      return;
+    }
+
+    const fields = collectionNode.data.fields;
+
+    for (const field of fields) {
+      // Si el campo tiene relación y existe la data para ese campo en el objeto enviado
+      if (field.relation && data[field.name]) {
+        const targetValue = data[field.name];
+
+        // Manejar tanto un ID único como un array de IDs (para one_to_many si se envía así)
+        const targetIds = Array.isArray(targetValue)
+          ? targetValue
+          : [targetValue];
+
+        for (const targetId of targetIds) {
+          if (typeof targetId === 'string' && targetId) {
+            const relation = this.relationRepo.create({
+              targetRecord: savedRecord,
+              targetRecordId: targetId,
+              targetNameRecord: field.name,
+            });
+            await this.relationRepo.save(relation);
+
+            this.logger.debug(
+              `Relación creada: ${savedRecord.id} --(${field.name})--> ${targetId}`,
+            );
+          }
+        }
+      }
+    }
   }
 }

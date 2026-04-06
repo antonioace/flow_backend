@@ -9,7 +9,13 @@ export class PushNotificationsController {
 
   @UseGuards(JwtAuthGuard)
   @Post('subscribe')
-  subscribe(@Body() createSubscriptionDto: CreateSubscriptionDto, @Request() req) {
-    return this.pushService.addSubscription(createSubscriptionDto, req.user.userId);
+  subscribe(
+    @Body() createSubscriptionDto: CreateSubscriptionDto,
+    @Request() req,
+  ) {
+    return this.pushService.addSubscription(
+      createSubscriptionDto,
+      req.user.userId,
+    );
   }
 }
