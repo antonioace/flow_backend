@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import {
   ConditionalActionDto,
@@ -14,6 +14,8 @@ import {
   RecordAction,
   RecordActionDto,
 } from './dto/record-action.dto';
+import { User } from '../users/entities/user.entity';
+import { UsersService } from '../users/users.service';
 import { WorkspaceRecordRelation } from './entities/workspace-record-relation.entity';
 import { WorkspaceRecord } from './entities/workspace-record.entity';
 import { Workspace } from './entities/workspace.entity';
@@ -29,6 +31,8 @@ export class WorkspaceRecordsService {
     private readonly workspaceRepo: Repository<Workspace>,
     @InjectRepository(WorkspaceRecordRelation)
     private readonly relationRepo: Repository<WorkspaceRecordRelation>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {}
 
   /**
@@ -248,10 +252,27 @@ export class WorkspaceRecordsService {
     workspaceId: string,
     collectionId: string,
     idRecord: string,
+    include?: Record<string, boolean>,
   ) {
-    const record = await this.recordRepo.findOne({
-      where: { id: idRecord, workspaceId, collectionId },
-    });
+    const activeIncludes = include
+      ? Object.entries(include)
+          .filter(([, v]) => v)
+          .map(([k]) => k)
+      : [];
+
+    const qb = this.recordRepo
+      .createQueryBuilder('record')
+      .where('record.id = :idRecord', { idRecord })
+      .andWhere('record.workspaceId = :workspaceId', { workspaceId })
+      .andWhere('record.collectionId = :collectionId', { collectionId });
+
+    if (activeIncludes.length > 0) {
+      qb.leftJoinAndSelect('record.targetRelations', 'relation')
+        .leftJoinAndSelect('relation.targetRecord', 'targetRecord')
+        .leftJoinAndSelect('relation.targetUser', 'targetUser');
+    }
+
+    const record = await qb.getOne();
 
     if (!record) {
       throw new NotFoundException(
@@ -259,11 +280,27 @@ export class WorkspaceRecordsService {
       );
     }
 
+    const finalData = { ...(record.data as Record<string, unknown>) };
+
+    if (activeIncludes.length > 0 && record.targetRelations) {
+      record.targetRelations.forEach((rel) => {
+        if (activeIncludes.includes(rel.targetNameRecord)) {
+          const cleanKey = rel.targetNameRecord.replace(/^(id_|_id)|_id$/g, '');
+
+          if (rel.targetRecord) {
+            finalData[cleanKey] = rel.targetRecord.data;
+          } else if (rel.targetUser) {
+            finalData[cleanKey] = UsersService.sanitize(rel.targetUser);
+          }
+        }
+      });
+    }
+
     return {
       success: true,
       action: 'obtener',
       message: 'Record obtenido exitosamente.',
-      data: record.data,
+      data: finalData,
     };
   }
 
@@ -283,7 +320,6 @@ export class WorkspaceRecordsService {
       .where('record."workspaceId" = :workspaceId', { workspaceId })
       .andWhere('record."collectionId" = :collectionId', { collectionId });
 
-    // Si hay incluye activos, traemos las relaciones
     const activeIncludes = include
       ? Object.entries(include)
           .filter(([, v]) => v)
@@ -291,7 +327,9 @@ export class WorkspaceRecordsService {
       : [];
 
     if (activeIncludes.length > 0) {
-      qb.leftJoinAndSelect('record.targetRelations', 'relation');
+      qb.leftJoinAndSelect('record.targetRelations', 'relation')
+        .leftJoinAndSelect('relation.targetRecord', 'targetRecord')
+        .leftJoinAndSelect('relation.targetUser', 'targetUser');
     }
 
     // Filtrado dinámico sobre la columna JSONB "data"
@@ -380,48 +418,33 @@ export class WorkspaceRecordsService {
 
     const [records, total] = await qb.getManyAndCount();
 
-    let finalData = records.map((r) => r.data as Record<string, any>);
+    let finalData: Record<string, unknown>[] = records.map(
+      (r) => r.data as Record<string, unknown>,
+    );
 
-    // Si hay includes, buscamos los records destino
     if (activeIncludes.length > 0) {
-      const targetIds = new Set<string>();
-      records.forEach((record) => {
+      finalData = records.map((record) => {
+        const enrichedData: Record<string, unknown> = {
+          ...(record.data as Record<string, unknown>),
+        };
+
         record.targetRelations?.forEach((rel) => {
           if (activeIncludes.includes(rel.targetNameRecord)) {
-            targetIds.add(rel.targetRecordId);
+            const cleanKey = rel.targetNameRecord.replace(
+              /^(id_|_id)|_id$/g,
+              '',
+            );
+
+            if (rel.targetRecord) {
+              enrichedData[cleanKey] = rel.targetRecord.data;
+            } else if (rel.targetUser) {
+              enrichedData[cleanKey] = UsersService.sanitize(rel.targetUser);
+            }
           }
         });
+
+        return enrichedData;
       });
-
-      if (targetIds.size > 0) {
-        const targetRecords = await this.recordRepo.find({
-          where: { id: In([...targetIds]) },
-        });
-
-        const targetDataMap = new Map(
-          targetRecords.map((tr) => [tr.id, tr.data]),
-        );
-
-        finalData = records.map((record) => {
-          const enrichedData = { ...(record.data as Record<string, any>) };
-
-          record.targetRelations?.forEach((rel) => {
-            if (activeIncludes.includes(rel.targetNameRecord)) {
-              const targetData = targetDataMap.get(rel.targetRecordId);
-              if (targetData) {
-                // Key logic: replace /^id_/ or /_id$/ or /^_id/
-                const newKey = rel.targetNameRecord.replace(
-                  /^(id_|_id)|_id$/g,
-                  '',
-                );
-                enrichedData[newKey] = targetData;
-              }
-            }
-          });
-
-          return enrichedData;
-        });
-      }
     }
 
     return {
@@ -523,13 +546,16 @@ export class WorkspaceRecordsService {
           if (typeof targetId === 'string' && targetId) {
             const relation = this.relationRepo.create({
               targetRecord: savedRecord,
-              targetRecordId: targetId,
               targetNameRecord: field.name,
+              // Si el campo es isUser, poblamos targetUserId en lugar de targetRecordId
+              ...(field.isUser
+                ? { targetUserId: targetId }
+                : { targetRecordId: targetId }),
             });
             await this.relationRepo.save(relation);
 
             this.logger.debug(
-              `Relación creada: ${savedRecord.id} --(${field.name})--> ${targetId}`,
+              `Relación creada: ${savedRecord.id} --(${field.name})--> ${targetId} (isUser: ${!!field.isUser})`,
             );
           }
         }

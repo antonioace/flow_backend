@@ -24,6 +24,14 @@ export class UsersService {
     return this.usersRepository.save(user);
   }
 
+  static sanitize(user: User) {
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+    };
+  }
+
   async findAll(): Promise<User[]> {
     return this.usersRepository.find();
   }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OpenaiModule } from '../openai/openai.module';
+import { User } from '../users/entities/user.entity';
 import { AISchemaLog } from './entities/ai-schema-log.entity';
 import { WorkspaceHistory } from './entities/workspace-history.entity';
 import { WorkspaceRecordRelation } from './entities/workspace-record-relation.entity';
@@ -19,6 +20,7 @@ import { WorkspacesService } from './workspaces.service';
       WorkspaceRecord,
       WorkspaceRecordRelation,
       AISchemaLog,
+      User,
     ]),
     OpenaiModule,
   ],
