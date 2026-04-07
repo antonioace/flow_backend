@@ -23,6 +23,9 @@ export class User {
   @Column()
   name: string;
 
+  @Column({ nullable: true })
+  profile?: string;
+
   @Exclude()
   @Column()
   password: string;

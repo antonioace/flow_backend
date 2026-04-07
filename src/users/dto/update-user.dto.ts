@@ -14,7 +14,9 @@ export class UpdateUserDto {
   @IsString()
   @IsOptional()
   name?: string;
-
+  @IsString()
+  @IsOptional()
+  profile?: string;
   @IsString()
   @MinLength(6)
   @IsOptional()

@@ -1,11 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import {
-  S3Client,
-  PutObjectCommand,
   GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -35,9 +35,12 @@ export class S3Service {
 
   async uploadFile(
     file: Express.Multer.File,
+    folder?: string,
+    fileName?: string,
   ): Promise<{ key: string; url: string }> {
-    const key = `${randomUUID()}-${file.originalname}`;
-    const bucket = this.configService.get('AWS_S3_BUCKET_NAME');
+    const baseName = fileName || `${randomUUID()}-${file.originalname}`;
+    const key = folder ? `${folder}/${baseName}` : baseName;
+    const bucket = this.configService.get('AWS_S3_BUCKET_NAME') as string;
 
     try {
       await this.s3Client.send(
@@ -57,7 +60,7 @@ export class S3Service {
       // Or if you have a public domain setup.
       // Let's assume the endpoint + bucket + key format for now, or just the stored key if using signed URLs later.
 
-      const endpoint = this.configService.get('AWS_URL');
+      const endpoint = this.configService.get('AWS_URL') as string;
       const url = `${endpoint}/${bucket}/${key}`;
 
       return { key, url };
@@ -68,7 +71,7 @@ export class S3Service {
   }
 
   async getSignedUrl(key: string, expiresIn: number = 3600): Promise<string> {
-    const bucket = this.configService.get('AWS_S3_BUCKET_NAME');
+    const bucket = this.configService.get('AWS_S3_BUCKET_NAME') as string;
     try {
       const command = new GetObjectCommand({
         Bucket: bucket,

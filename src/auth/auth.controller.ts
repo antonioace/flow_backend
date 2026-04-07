@@ -12,7 +12,18 @@ export class AuthController {
 
   @UseGuards(LocalAuthGuard)
   @Post('login')
-  login(@Request() req: { user: { id: string; email: string; role: string } }) {
+  login(
+    @Request()
+    req: {
+      user: {
+        id: string;
+        email: string;
+        role: string;
+        profile?: string;
+        name?: string;
+      };
+    },
+  ) {
     return this.authService.login(req.user);
   }
 

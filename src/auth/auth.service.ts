@@ -1,10 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { EmailService } from '../email/email.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from './dto/register.dto';
-import { EmailService } from '../email/email.service';
-import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class AuthService {
@@ -27,8 +27,20 @@ export class AuthService {
     return user;
   }
 
-  async login(user: { id: string; email: string; role: string }) {
-    const payload = { sub: user.id, email: user.email, role: user.role };
+  async login(user: {
+    id: string;
+    email: string;
+    role: string;
+    profile?: string;
+    name?: string;
+  }) {
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      profile: user.profile,
+      name: user.name,
+    };
     return {
       access_token: await this.jwtService.signAsync(payload),
     };
@@ -44,6 +56,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       role: user.role,
+      profile: user.profile,
     });
     return { user, ...token };
   }
@@ -86,12 +99,18 @@ export class AuthService {
   }
 
   async verifyToken(token: string) {
-    const payload: unknown = await this.jwtService.verifyAsync(token, {
-      secret: this.configService.get<string>('JWT_SECRET') as string,
-    });
-    if (!payload) {
+    try {
+      const payload: {
+        sub: string;
+        email: string;
+        role: string;
+        profile?: string;
+      } = await this.jwtService.verifyAsync(token, {
+        secret: this.configService.get<string>('JWT_SECRET') as string,
+      });
+      return { valid: true, user: payload };
+    } catch {
       throw new BadRequestException('Invalid or expired token');
     }
-    return { valid: true };
   }
 }

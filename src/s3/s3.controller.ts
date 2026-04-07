@@ -1,20 +1,44 @@
 import {
+  BadRequestException,
+  Body,
   Controller,
   Post,
-  Body,
-  BadRequestException,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { S3Service } from './s3.service';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UploadFileBodyDto } from './dto/upload-file.dto';
+import { S3Service } from './s3.service';
 
 @Controller('s3')
 export class S3Controller {
   constructor(private readonly s3Service: S3Service) {}
 
   @UseGuards(JwtAuthGuard)
-  @Post('signed-url')
-  async getSignedUrl(@Body('path') path: string) {
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadFile(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: UploadFileBodyDto,
+  ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+
+    const result = await this.s3Service.uploadFile(
+      file,
+      body.folder,
+      body.fileName,
+    );
+
+    return result;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(['signed-url', 'sign-url'])
+  async getSignedUrl(@Body('url') path: string) {
     if (!path) {
       throw new BadRequestException('Path (key or url) is required');
     }
