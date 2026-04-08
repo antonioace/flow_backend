@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { EmailService } from '../email/email.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from './dto/register.dto';
+import { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Injectable()
 export class AuthService {
@@ -34,7 +35,7 @@ export class AuthService {
     profile?: string;
     name?: string;
   }) {
-    const payload = {
+    const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
@@ -100,12 +101,7 @@ export class AuthService {
 
   async verifyToken(token: string) {
     try {
-      const payload: {
-        sub: string;
-        email: string;
-        role: string;
-        profile?: string;
-      } = await this.jwtService.verifyAsync(token, {
+      const payload: JwtPayload = await this.jwtService.verifyAsync(token, {
         secret: this.configService.get<string>('JWT_SECRET') as string,
       });
       return { valid: true, user: payload };

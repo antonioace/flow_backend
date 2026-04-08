@@ -48,7 +48,7 @@ export class ChatGatewayService
         return;
       }
 
-      this.chatWssService.registerClient(client, user);
+      await this.chatWssService.registerClient(client, user);
       this.logger.log(`Client connected: ${client.id}`);
     } catch (error: any) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access

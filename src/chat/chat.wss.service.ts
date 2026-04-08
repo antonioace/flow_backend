@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Socket } from 'socket.io';
+import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { User } from 'src/users/entities/user.entity';
+import { UsersService } from 'src/users/users.service';
 import { ChatService } from './chat.service';
 import { PayloadRoom } from './gateways/chat.gateway';
 interface ConnectedClient {
@@ -14,13 +16,24 @@ export class ChatWssService {
   private readonly logger = new Logger(ChatWssService.name);
   private connectedClients: ConnectedClient = {};
   private rooms: Map<string, Set<string>> = new Map();
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly usersService: UsersService,
+  ) {}
 
-  registerClient(client: Socket, user: Partial<User>) {
-    this.checkConnection(user);
+  async registerClient(client: Socket, user: Partial<JwtPayload>) {
+    if (!user.sub) {
+      throw new Error('Invalid user');
+    }
+    const userFound = await this.usersService.findOne(user.sub);
+    if (!userFound) {
+      throw new Error('User not found');
+    }
+    this.checkConnection(userFound);
+
     this.connectedClients[client.id] = {
       socket: client,
-      user,
+      user: userFound,
     };
   }
 
