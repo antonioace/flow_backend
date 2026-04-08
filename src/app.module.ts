@@ -16,6 +16,7 @@ import { OpenaiModule } from './openai/openai.module';
 import { AudioModule } from './audio/audio.module';
 import { FlowModule } from './flow/flow.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AudioModule,
     FlowModule,
     WorkspacesModule,
+    ChatModule,
   ],
 })
 export class AppModule {}
