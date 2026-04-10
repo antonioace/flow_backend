@@ -26,6 +26,7 @@ export class ChatService {
    * Crea una nueva conversación uno-a-uno o devuelve una existente.
    */
   async createConversation(userId: string, dto: CreateConversationDto) {
+    const { name, description } = dto;
     let { recipientId } = dto;
 
     if (!recipientId) {
@@ -44,17 +45,6 @@ export class ChatService {
 
     const participants = [userId, recipientId];
 
-    // Buscar si ya existe una conversación entre estos dos usuarios
-    const existing = await this.conversationRepo
-      .createQueryBuilder('conversation')
-      .innerJoin('conversation.participants', 'participant')
-      .where('participant.id IN (:...ids)', { ids: participants })
-      .groupBy('conversation.id')
-      .having('COUNT(participant.id) = 2')
-      .getOne();
-
-    if (existing) return existing;
-
     const participantUsers = await this.userRepo.find({
       where: { id: In(participants) },
     });
@@ -65,6 +55,8 @@ export class ChatService {
 
     const conversation = this.conversationRepo.create({
       participants: participantUsers,
+      name,
+      description,
     });
 
     return this.conversationRepo.save(conversation);
@@ -140,5 +132,14 @@ export class ChatService {
       order: { createdAt: 'ASC' },
       take: 50,
     });
+  }
+
+  /**
+   * Elimina una conversación y todos sus mensajes (vía CASCADE).
+   */
+  async deleteConversation(userId: string, id: string) {
+    const conversation = await this.getConversationById(userId, id);
+    await this.conversationRepo.remove(conversation);
+    return { success: true };
   }
 }

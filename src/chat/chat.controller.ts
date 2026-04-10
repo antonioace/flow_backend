@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Delete,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -67,5 +68,16 @@ export class ChatController {
     @Param('conversationId') conversationId: string,
   ) {
     return this.chatService.getMessages(req.user.userId, conversationId);
+  }
+
+  /**
+   * Elimina una conversación.
+   */
+  @Delete('conversations/:id')
+  async deleteConversation(
+    @Request() req: { user: { userId: string } },
+    @Param('id') id: string,
+  ) {
+    return this.chatService.deleteConversation(req.user.userId, id);
   }
 }
