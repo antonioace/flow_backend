@@ -32,7 +32,6 @@ export class ChatGatewayService
   ) {}
   private logger: Logger = new Logger('ChatGateway');
   async handleConnection(client: Socket) {
-    console.log('TE INTENTAS CONETAR HIJO DEPUTA');
     try {
       const token = client.handshake.headers?.authorization;
       if (!token) {
