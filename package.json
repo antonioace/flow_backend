@@ -43,7 +43,7 @@
     "@nestjs/websockets": "^11.1.18",
     "@types/multer": "^2.0.0",
     "@types/web-push": "^3.6.4",
-    "aws-sdk": "^1.18.0",
+    "aws-sdk": "^2.1693.0",
     "axios": "^1.15.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.6.2",
