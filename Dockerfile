@@ -1,5 +1,5 @@
 # Base image
-FROM node:22-alpine AS build
+FROM node:22 AS build
 
 # Create app directory
 WORKDIR /usr/src/app
@@ -15,7 +15,7 @@ COPY . .
 RUN npm run build
 
 # Production image
-FROM node:22-alpine
+FROM node:22
 
 WORKDIR /usr/src/app
 
