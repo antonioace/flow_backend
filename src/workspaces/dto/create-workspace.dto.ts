@@ -15,4 +15,7 @@ export class CreateWorkspaceDto {
   @IsOptional()
   @IsArray()
   edges?: any[];
+  @IsOptional()
+  @IsArray()
+  actions?: any[];
 }

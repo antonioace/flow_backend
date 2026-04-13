@@ -76,4 +76,7 @@ export class RecordActionDto {
 
   @IsOptional()
   include?: Record<string, boolean>;
+
+  @IsOptional()
+  includeAdditionalFields?: Record<'count' | 'list', boolean>;
 }

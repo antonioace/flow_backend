@@ -40,7 +40,11 @@ export class WorkspacesService {
       ...dto,
       userId,
     });
-    return this.workspaceRepo.save(workspace);
+    const saved = await this.workspaceRepo.save(workspace);
+
+    this.eventEmitter.emit('workspace.created', saved);
+
+    return saved;
   }
 
   async findAllByUser(userId: string): Promise<Workspace[]> {
@@ -71,7 +75,11 @@ export class WorkspacesService {
   ): Promise<Workspace> {
     const workspace = await this.findOne(id, userId);
     Object.assign(workspace, dto);
-    return this.workspaceRepo.save(workspace);
+    const saved = await this.workspaceRepo.save(workspace);
+
+    this.eventEmitter.emit('workspace.updated', saved);
+
+    return saved;
   }
 
   async remove(id: string, userId: string): Promise<void> {

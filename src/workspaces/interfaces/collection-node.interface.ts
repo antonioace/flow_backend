@@ -15,6 +15,8 @@ export interface FieldRelation {
   targetCollectionId: string;
   targetFieldId?: string;
   type: RelationType;
+  countFieldName?: string;
+  listFieldName?: string;
 }
 
 export interface CollectionField {

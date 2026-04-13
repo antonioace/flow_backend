@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { CollectionNode } from '../interfaces/collection-node.interface';
+import { WorkspaceAction } from '../interfaces/workspaces-action.interface';
 
 @Entity('workspaces')
 export class Workspace {
@@ -39,6 +40,10 @@ export class Workspace {
 
   @Column({ nullable: true, type: 'json' })
   edges?: any;
+
+  @Column({ nullable: true, type: 'json' })
+  actions?: WorkspaceAction[];
+
   @Column({ default: true })
   isActive: boolean;
 }

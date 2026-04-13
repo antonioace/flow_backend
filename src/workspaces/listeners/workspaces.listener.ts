@@ -3,6 +3,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AISchemaLog } from '../entities/ai-schema-log.entity';
+import { Workspace } from '../entities/workspace.entity';
 
 @Injectable()
 export class WorkspacesEventListener {
@@ -38,5 +39,19 @@ export class WorkspacesEventListener {
         error,
       );
     }
+  }
+
+  @OnEvent('workspace.created')
+  handleWorkspaceCreated(payload: Workspace) {
+    this.logger.debug(
+      `Listener workspace.created - ID: ${payload.id}, Name: ${payload.name}`,
+    );
+  }
+
+  @OnEvent('workspace.updated')
+  handleWorkspaceUpdated(payload: Workspace) {
+    this.logger.debug(
+      `Listener workspace.updated - ID: ${payload.id}, Name: ${payload.name}`,
+    );
   }
 }

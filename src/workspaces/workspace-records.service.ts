@@ -4,18 +4,19 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
+import { User } from '../users/entities/user.entity';
+import { UsersService } from '../users/users.service';
 import {
   ConditionalActionDto,
   PaginationDto,
   RecordAction,
   RecordActionDto,
 } from './dto/record-action.dto';
-import { User } from '../users/entities/user.entity';
-import { UsersService } from '../users/users.service';
 import { WorkspaceRecordRelation } from './entities/workspace-record-relation.entity';
 import { WorkspaceRecord } from './entities/workspace-record.entity';
 import { Workspace } from './entities/workspace.entity';
@@ -33,6 +34,7 @@ export class WorkspaceRecordsService {
     private readonly relationRepo: Repository<WorkspaceRecordRelation>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -86,7 +88,13 @@ export class WorkspaceRecordsService {
             'El idRecord es obligatorio para la acción "obtener".',
           );
         }
-        return this.getRecord(workspaceId, idCollection, idRecord);
+        return this.getRecord(
+          workspaceId,
+          idCollection,
+          idRecord,
+          include,
+          dto.includeAdditionalFields,
+        );
 
       case RecordAction.GET_ALL:
         return this.getAllRecords(
@@ -95,6 +103,7 @@ export class WorkspaceRecordsService {
           dto.conditionals,
           dto.pagination,
           include,
+          dto.includeAdditionalFields,
         );
 
       case RecordAction.BULK_INSERT:
@@ -155,6 +164,13 @@ export class WorkspaceRecordsService {
       `Record creado en colección "${collectionId}" del workspace "${workspaceId}"`,
     );
 
+    // Emitir evento de creación
+    this.eventEmitter.emit('record.created', {
+      workspaceId,
+      collectionId,
+      data: savedRecord.data,
+    });
+
     return {
       success: true,
       action: 'create',
@@ -205,6 +221,15 @@ export class WorkspaceRecordsService {
       `Record "${idRecord}" actualizado en colección "${collectionId}"`,
     );
 
+    // Emitir evento de actualización
+    if (updated) {
+      this.eventEmitter.emit('record.updated', {
+        workspaceId,
+        collectionId,
+        data: updated.data,
+      });
+    }
+
     return {
       success: true,
       action: 'update',
@@ -237,6 +262,13 @@ export class WorkspaceRecordsService {
       `Record "${idRecord}" eliminado de colección "${collectionId}"`,
     );
 
+    // Emitir evento de eliminación
+    this.eventEmitter.emit('record.deleted', {
+      workspaceId,
+      collectionId,
+      data: toDelete.data,
+    });
+
     return {
       success: true,
       action: 'delete',
@@ -253,6 +285,7 @@ export class WorkspaceRecordsService {
     collectionId: string,
     idRecord: string,
     include?: Record<string, boolean>,
+    includeAdditionalFields?: Record<'count' | 'list', boolean>,
   ) {
     const activeIncludes = include
       ? Object.entries(include)
@@ -296,6 +329,16 @@ export class WorkspaceRecordsService {
       });
     }
 
+    // Enriquecer con campos adicionales (count / list) de incoming relations
+    if (includeAdditionalFields) {
+      await this.enrichWithAdditionalFields(
+        workspaceId,
+        collectionId,
+        finalData,
+        includeAdditionalFields,
+      );
+    }
+
     return {
       success: true,
       action: 'obtener',
@@ -314,6 +357,7 @@ export class WorkspaceRecordsService {
     conditionals?: ConditionalActionDto[],
     pagination?: PaginationDto,
     include?: Record<string, boolean>,
+    includeAdditionalFields?: Record<'count' | 'list', boolean>,
   ) {
     const qb = this.recordRepo
       .createQueryBuilder('record')
@@ -447,6 +491,18 @@ export class WorkspaceRecordsService {
       });
     }
 
+    // Enriquecer con campos adicionales (count / list) de incoming relations
+    if (includeAdditionalFields) {
+      for (const item of finalData) {
+        await this.enrichWithAdditionalFields(
+          workspaceId,
+          collectionId,
+          item,
+          includeAdditionalFields,
+        );
+      }
+    }
+
     return {
       success: true,
       action: 'obtenerTodos',
@@ -500,6 +556,78 @@ export class WorkspaceRecordsService {
       message: `${entities.length} records insertados exitosamente.`,
       data: entities.map((e) => e.data),
     };
+  }
+
+  /**
+   * Enriquece un record con campos adicionales de incoming relations.
+   * Busca en todas las colecciones del workspace qué campos apuntan
+   * a la colección actual y consulta directamente workspace_records
+   * filtrando por el campo de relación en la columna JSONB "data".
+   */
+  private async enrichWithAdditionalFields(
+    workspaceId: string,
+    collectionId: string,
+    recordData: Record<string, unknown>,
+    includeAdditionalFields: Record<'count' | 'list', boolean>,
+  ) {
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId },
+    });
+
+    if (!workspace || !workspace.nodes) return;
+
+    const recordId = recordData['_id'] as string;
+    if (!recordId) return;
+
+    const wantCount = includeAdditionalFields.count === true;
+    const wantList = includeAdditionalFields.list === true;
+
+    for (const node of workspace.nodes) {
+      if (!node.data?.fields) continue;
+
+      for (const field of node.data.fields) {
+        if (!field.relation) continue;
+        if (field.relation.targetCollectionId !== collectionId) continue;
+
+        // Este campo en otra colección apunta a nuestra colección.
+        // Buscamos directamente en workspace_records donde
+        // data->>'fieldName' = recordId y collectionId = sourceCollectionId
+        const fieldName = field.name;
+        const sourceCollectionId = node.id;
+
+        if (wantCount && field.relation.countFieldName) {
+          const count = await this.recordRepo
+            .createQueryBuilder('record')
+            .where('record."workspaceId" = :workspaceId', { workspaceId })
+            .andWhere('record."collectionId" = :sourceCollectionId', {
+              sourceCollectionId,
+            })
+            .andWhere(`record."data"->>:fieldName = :recordId`, {
+              fieldName,
+              recordId,
+            })
+            .getCount();
+
+          recordData[field.relation.countFieldName] = count;
+        }
+
+        if (wantList && field.relation.listFieldName) {
+          const records = await this.recordRepo
+            .createQueryBuilder('record')
+            .where('record."workspaceId" = :workspaceId', { workspaceId })
+            .andWhere('record."collectionId" = :sourceCollectionId', {
+              sourceCollectionId,
+            })
+            .andWhere(`record."data"->>:fieldName = :recordId`, {
+              fieldName,
+              recordId,
+            })
+            .getMany();
+
+          recordData[field.relation.listFieldName] = records.map((r) => r.data);
+        }
+      }
+    }
   }
 
   /**

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
+import { CreateEmailOptions, Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
@@ -15,13 +15,30 @@ export class EmailService {
     const from =
       this.configService.get<string>('MAIL_FROM') || 'onboarding@resend.dev';
 
-    const { data, error } = await this.resend.emails.send({
-      from,
-      to: [to],
-      subject,
-      text,
-      html,
-    });
+    // Detectar si el texto contiene etiquetas HTML
+    const isHtml = /<[a-z][\s\S]*>/i.test(text);
+
+    // Construir el payload de forma que TypeScript reconozca que al menos uno (html o text) está presente
+    let payload: CreateEmailOptions;
+
+    if (html || isHtml) {
+      payload = {
+        from,
+        to: [to],
+        subject,
+        html: html || text,
+        text: isHtml && !html ? undefined : text,
+      };
+    } else {
+      payload = {
+        from,
+        to: [to],
+        subject,
+        text: text,
+      };
+    }
+
+    const { data, error } = await this.resend.emails.send(payload);
 
     if (error) {
       console.error('Error sending email with Resend:', error);
