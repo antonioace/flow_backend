@@ -1,31 +1,27 @@
-# Base image
-FROM node:22 AS build
+# 1. USAMOS LA IMAGEN QUE SÍ TIENE COMPILADORES (No uses Alpine)
+FROM node:20-bookworm AS build
 
-# Create app directory
 WORKDIR /usr/src/app
 
-# Install app dependencies
-COPY package*.json ./
-RUN npm install --loglevel verbose
+# 2. Copiamos los archivos
+COPY package.json package-lock.json ./
 
-# Bundle app source
+# 3. Instalamos y OBLIGAMOS a que nos muestre el error si falla
+RUN npm install > install_log.txt 2>&1 || (cat install_log.txt && exit 1)
+
+# 4. Copiamos el resto
 COPY . .
-
-# Build the application
 RUN npm run build
 
-# Production image
-FROM node:22
+# --- ETAPA DE PRODUCCIÓN ---
+FROM node:20-bookworm-slim
 
 WORKDIR /usr/src/app
 
-# Copy only the necessary files from the build stage
 COPY --from=build /usr/src/app/package*.json ./
 COPY --from=build /usr/src/app/dist ./dist
 COPY --from=build /usr/src/app/node_modules ./node_modules
 
-# Expose the port the app runs on
 EXPOSE 3001
 
-# Start the application
 CMD ["npm", "run", "start:prod"]
