@@ -12,8 +12,8 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { PaginationDto } from '../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { CreateWorkspaceHistoryDto } from './dto/create-workspace-history.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { GenerateSchemaDto } from './dto/generate-schema.dto';
@@ -52,12 +52,27 @@ export class WorkspacesController {
     return this.workspacesService.getAISchemaLogs(pagination);
   }
 
+  @Get('events')
+  getEvents(@Query() pagination: PaginationDto) {
+    return this.workspacesService.getEvents(pagination);
+  }
   @Get(':id')
   findOne(
     @Param('id') id: string,
     @Request() req: { user: { userId: string } },
   ) {
     return this.workspacesService.findOne(id, req.user.userId);
+  }
+
+  @Get(':workspaceId/history')
+  getHistory(
+    @Param('workspaceId') workspaceId: string,
+    @Request() req: { user: { userId: string } },
+  ) {
+    return this.workspacesService.getHistoryByWorkspace(
+      workspaceId,
+      req.user.userId,
+    );
   }
 
   @Put(':id')
@@ -85,17 +100,6 @@ export class WorkspacesController {
     @Body() dto: CreateWorkspaceHistoryDto,
   ) {
     return this.workspacesService.createHistory(req.user.userId, dto);
-  }
-
-  @Get(':workspaceId/history')
-  getHistory(
-    @Param('workspaceId') workspaceId: string,
-    @Request() req: { user: { userId: string } },
-  ) {
-    return this.workspacesService.getHistoryByWorkspace(
-      workspaceId,
-      req.user.userId,
-    );
   }
 
   @Delete('history/:historyId')

@@ -8,13 +8,14 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { OpenaiService } from '../openai/openai.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { OpenaiService } from '../openai/openai.service';
 import { CreateWorkspaceHistoryDto } from './dto/create-workspace-history.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { GenerateSchemaDto } from './dto/generate-schema.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { AISchemaLog } from './entities/ai-schema-log.entity';
+import { ScheduledAction } from './entities/scheduled-action.entity';
 import { WorkspaceHistory } from './entities/workspace-history.entity';
 import { Workspace } from './entities/workspace.entity';
 
@@ -29,6 +30,8 @@ export class WorkspacesService {
     private readonly historyRepo: Repository<WorkspaceHistory>,
     @InjectRepository(AISchemaLog)
     private readonly aiSchemaLogRepo: Repository<AISchemaLog>,
+    @InjectRepository(ScheduledAction)
+    private readonly scheduledActionRepo: Repository<ScheduledAction>,
     private readonly openaiService: OpenaiService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -286,6 +289,32 @@ ${description}`;
     return {
       success: true,
       data: logs,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+    };
+  }
+
+  // ─── Events (Scheduled Actions) ───────────────────────────────────
+
+  async getEvents(pagination: PaginationDto) {
+    const { page = 1, limit = 10 } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [events, total] = await this.scheduledActionRepo.findAndCount({
+      order: { executeAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      success: true,
+      data: events,
       meta: {
         total,
         page,
