@@ -8,8 +8,11 @@ import {
   Post,
   Query,
   Request,
+  Sse,
+  MessageEvent,
   UseGuards,
 } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
@@ -38,6 +41,11 @@ export class NotificationsController {
       req.user.userId,
       paginationDto,
     );
+  }
+
+  @Sse('sse')
+  sse(@Request() req: { user: { userId: string } }): Observable<MessageEvent> {
+    return this.notificationsService.getEventStream(req.user.userId);
   }
 
   @Get(':id')

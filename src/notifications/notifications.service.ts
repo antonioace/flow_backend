@@ -1,4 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, MessageEvent, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { fromEvent, interval, merge, Observable } from 'rxjs';
+import { filter, map } from 'rxjs/operators';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CreateNotificationDto } from './dto/create-notification.dto';
@@ -12,6 +15,7 @@ export class NotificationsService {
   constructor(
     @InjectRepository(Notification)
     private readonly notificationsRepository: Repository<Notification>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(userId: string, dto: CreateNotificationDto) {
@@ -20,7 +24,35 @@ export class NotificationsService {
       userId,
       readAt: null,
     });
-    return this.notificationsRepository.save(notification);
+    const saved = await this.notificationsRepository.save(notification);
+    this.eventEmitter.emit('notification.created', saved);
+    return saved;
+  }
+
+  getEventStream(userId: string): Observable<MessageEvent> {
+    const notifications$ = fromEvent(
+      this.eventEmitter,
+      'notification.created',
+    ).pipe(
+      filter((notification: Notification) => notification.userId === userId),
+      map(
+        (notification: Notification) =>
+          ({
+            data: notification,
+            type: 'notification-created',
+          }) as MessageEvent,
+      ),
+    );
+
+    // Heartbeat cada 30s para mantener la conexión viva
+    const heartbeat$ = interval(30000).pipe(
+      map(
+        () =>
+          ({ data: { type: 'heartbeat' }, type: 'heartbeat' }) as MessageEvent,
+      ),
+    );
+
+    return merge(notifications$, heartbeat$);
   }
 
   async findAllByUser(
