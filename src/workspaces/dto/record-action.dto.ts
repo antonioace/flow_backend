@@ -46,6 +46,19 @@ export class PaginationDto {
   limit?: number;
 }
 
+export class QueryActionDto {
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  orderBy?: string;
+
+  @IsOptional()
+  @IsString()
+  orderByDirection?: 'ASC' | 'DESC';
+}
 export class RecordActionDto {
   @IsEnum(RecordAction, {
     message:
@@ -79,4 +92,9 @@ export class RecordActionDto {
 
   @IsOptional()
   includeAdditionalFields?: Record<'count' | 'list', boolean>;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QueryActionDto)
+  query?: QueryActionDto;
 }

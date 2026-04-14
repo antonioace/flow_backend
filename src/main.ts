@@ -12,7 +12,9 @@ async function bootstrap() {
     }),
   );
 
-  app.enableCors();
+  app.enableCors({
+    origin: '*',
+  });
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
   console.log(`Servidor corriendo en el puerto  ${process.env.PORT ?? 3000}`);

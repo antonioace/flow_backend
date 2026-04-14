@@ -14,6 +14,7 @@ import { UsersService } from '../users/users.service';
 import {
   ConditionalActionDto,
   PaginationDto,
+  QueryActionDto,
   RecordAction,
   RecordActionDto,
 } from './dto/record-action.dto';
@@ -104,6 +105,7 @@ export class WorkspaceRecordsService {
           dto.pagination,
           include,
           dto.includeAdditionalFields,
+          dto.query,
         );
 
       case RecordAction.BULK_INSERT:
@@ -358,6 +360,7 @@ export class WorkspaceRecordsService {
     pagination?: PaginationDto,
     include?: Record<string, boolean>,
     includeAdditionalFields?: Record<'count' | 'list', boolean>,
+    query?: QueryActionDto,
   ) {
     const qb = this.recordRepo
       .createQueryBuilder('record')
@@ -451,6 +454,51 @@ export class WorkspaceRecordsService {
             break;
         }
       });
+    }
+
+    // Búsqueda global (search) sobre campos text y number del esquema
+    if (query?.search) {
+      const workspace = await this.workspaceRepo.findOne({
+        where: { id: workspaceId },
+      });
+      const collectionNode = workspace?.nodes?.find(
+        (node) => node.id === collectionId,
+      );
+      const searchableFields =
+        collectionNode?.data?.fields?.filter(
+          (f) => (f.type === 'text' || f.type === 'number') && !f.relation,
+        ) ?? [];
+
+      if (searchableFields.length > 0) {
+        const searchConditions = searchableFields
+          .map((f, i) => {
+            if (f.type === 'number') {
+              return `(record."data"->>'${f.name}')::text ILIKE :search_${i}`;
+            }
+            return `record."data"->>'${f.name}' ILIKE :search_${i}`;
+          })
+          .join(' OR ');
+
+        const searchParams: Record<string, string> = {};
+        searchableFields.forEach((_, i) => {
+          searchParams[`search_${i}`] = `%${query.search!}%`;
+        });
+
+        qb.andWhere(`(${searchConditions})`, searchParams);
+      }
+    }
+
+    // Ordenamiento (orderBy)
+    if (query?.orderBy) {
+      const direction: 'ASC' | 'DESC' = query.orderByDirection || 'ASC';
+
+      if (query.orderBy === '_createdAt' || query.orderBy === '_updatedAt') {
+        const column =
+          query.orderBy === '_createdAt' ? 'createdAt' : 'updatedAt';
+        qb.orderBy(`record."${column}"`, direction);
+      } else {
+        qb.orderBy(`record."data"->>'${query.orderBy}'`, direction);
+      }
     }
 
     // Paginación nativa a nivel SQL
