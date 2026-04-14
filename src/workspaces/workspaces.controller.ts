@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -56,6 +57,11 @@ export class WorkspacesController {
   getEvents(@Query() pagination: PaginationDto) {
     return this.workspacesService.getEvents(pagination);
   }
+  @Patch('events/:id/status')
+  updateEventStatus(@Param('id') id: string, @Body('status') status: string) {
+    return this.workspacesService.updateEventStatus(id, status);
+  }
+
   @Get(':id')
   findOne(
     @Param('id') id: string,

@@ -323,4 +323,18 @@ ${description}`;
       },
     };
   }
+
+  async updateEventStatus(id: string, status: string) {
+    const event = await this.scheduledActionRepo.findOne({ where: { id } });
+    if (!event) {
+      throw new NotFoundException(`Evento con id "${id}" no encontrado`);
+    }
+
+    event.status = status;
+    if (status === 'executed') {
+      event.executedAt = new Date();
+    }
+
+    return this.scheduledActionRepo.save(event);
+  }
 }
