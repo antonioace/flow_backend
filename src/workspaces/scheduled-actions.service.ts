@@ -20,6 +20,35 @@ export class ScheduledActionsService {
   ) {}
 
   /**
+   * Obtiene todas las acciones programadas de un workspace con paginación opcional.
+   */
+  async findAllByWorkspace(
+    workspaceId: string,
+    pagination?: { page?: number; limit?: number },
+  ) {
+    const page = pagination?.page || 1;
+    const limit = pagination?.limit || 10;
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await this.scheduledActionRepo.findAndCount({
+      where: { workspaceId },
+      order: { executeAt: 'DESC' },
+      take: limit,
+      skip,
+    });
+
+    return {
+      success: true,
+      data: items,
+      meta: {
+        total,
+        page,
+        limit,
+      },
+    };
+  }
+
+  /**
    * Programa una acción para ejecución futura.
    */
   async scheduleAction(params: {

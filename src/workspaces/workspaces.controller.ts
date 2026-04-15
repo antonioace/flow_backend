@@ -22,6 +22,7 @@ import { RecordActionDto } from './dto/record-action.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspaceRecordsService } from './workspace-records.service';
 import { WorkspacesService } from './workspaces.service';
+import { ScheduledActionsService } from './scheduled-actions.service';
 
 @Controller('workspaces')
 @UseGuards(JwtAuthGuard)
@@ -29,6 +30,7 @@ export class WorkspacesController {
   constructor(
     private readonly workspacesService: WorkspacesService,
     private readonly workspaceRecordsService: WorkspaceRecordsService,
+    private readonly scheduledActionsService: ScheduledActionsService,
   ) {}
 
   // ─── Workspace CRUD ─────────────────────────────────────────────
@@ -133,5 +135,18 @@ export class WorkspacesController {
   @HttpCode(HttpStatus.OK)
   generateSchema(@Body() generateSchemaDto: GenerateSchemaDto) {
     return this.workspacesService.generateSchema(generateSchemaDto);
+  }
+
+  // ─── Scheduled Actions (Cronjobs) ──────────────────────────────
+
+  @Get(':workspaceId/scheduled-actions')
+  getScheduledActions(
+    @Param('workspaceId') workspaceId: string,
+    @Query() pagination: { page?: number; limit?: number },
+  ) {
+    return this.scheduledActionsService.findAllByWorkspace(
+      workspaceId,
+      pagination,
+    );
   }
 }

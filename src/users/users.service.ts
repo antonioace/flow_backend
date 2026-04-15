@@ -29,12 +29,13 @@ export class UsersService {
       id: user.id,
       name: user.name,
       email: user.email,
+      profile: user.profile,
     };
   }
 
   async findAll(): Promise<User[]> {
     return this.usersRepository.find({
-      select: ['id', 'email', 'name'],
+      select: ['id', 'email', 'name', 'profile'],
     });
   }
 
