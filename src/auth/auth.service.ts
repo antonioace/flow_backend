@@ -104,7 +104,19 @@ export class AuthService {
       const payload: JwtPayload = await this.jwtService.verifyAsync(token, {
         secret: this.configService.get<string>('JWT_SECRET') as string,
       });
-      return { valid: true, user: payload };
+
+      const user = await this.usersService.findOne(payload.sub);
+
+      return {
+        valid: true,
+        user: {
+          ...payload,
+          email: user.email,
+          role: user.role,
+          profile: user.profile,
+          name: user.name,
+        },
+      };
     } catch {
       throw new BadRequestException('Invalid or expired token');
     }

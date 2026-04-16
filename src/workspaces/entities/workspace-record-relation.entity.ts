@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -37,4 +38,11 @@ export class WorkspaceRecordRelation {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @Column({ nullable: true })
+  linkedRecordId?: string;
+
+  @ManyToOne(() => WorkspaceRecord, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'linkedRecordId' })
+  linkedRecord?: WorkspaceRecord;
 }

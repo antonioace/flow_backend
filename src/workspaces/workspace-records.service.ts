@@ -125,6 +125,69 @@ export class WorkspaceRecordsService {
   // ─── Operaciones CRUD (un record por fila, data dinámica en JSONB) ───
 
   /**
+   * Valida la data de un record contra el esquema de la colección.
+   * - Verifica que no haya campos extra (whitelist).
+   * - Verifica que los campos requeridos estén presentes (en creación).
+   */
+  private async validateRecordData(
+    workspaceId: string,
+    collectionId: string,
+    data: Record<string, unknown>,
+    isUpdate = false,
+  ): Promise<void> {
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId },
+    });
+
+    if (!workspace) {
+      throw new NotFoundException(
+        `Workspace con id "${workspaceId}" no encontrado.`,
+      );
+    }
+
+    const collectionNode = workspace.nodes?.find(
+      (node) => node.id === collectionId,
+    );
+    if (!collectionNode || !collectionNode.data?.fields) {
+      throw new NotFoundException(
+        `Colección con id "${collectionId}" no encontrada en el workspace.`,
+      );
+    }
+
+    const fields = collectionNode.data.fields;
+    const allowedFields = new Set(fields.map((f) => f.name));
+    const requiredFields = fields
+      .filter((f) => f.validations?.required)
+      .map((f) => f.name);
+
+    // 1. Verificar campos extra (excluyendo internos del sistema)
+    const incomingKeys = Object.keys(data).filter(
+      (key) => !key.startsWith('_'),
+    );
+    const extraFields = incomingKeys.filter((key) => !allowedFields.has(key));
+
+    if (extraFields.length > 0) {
+      throw new BadRequestException(
+        `Campos no permitidos en la colección "${
+          collectionNode.data.label
+        }": ${extraFields.join(', ')}`,
+      );
+    }
+
+    // 2. Verificar campos requeridos (solo en creación o si es bulk insert)
+    if (!isUpdate) {
+      const missingFields = requiredFields.filter((field) => !(field in data));
+      if (missingFields.length > 0) {
+        throw new BadRequestException(
+          `Campos obligatorios faltantes para "${
+            collectionNode.data.label
+          }": ${missingFields.join(', ')}`,
+        );
+      }
+    }
+  }
+
+  /**
    * CREATE: Inserción nativa de TypeORM.
    * El UUID, createdAt y updatedAt los genera TypeORM automáticamente.
    */
@@ -134,6 +197,8 @@ export class WorkspaceRecordsService {
     data: Record<string, unknown>,
   ) {
     try {
+      await this.validateRecordData(workspaceId, collectionId, data, false);
+
       const id = randomUUID();
       const now = new Date().toISOString();
       const enrichedData = {
@@ -206,6 +271,9 @@ export class WorkspaceRecordsService {
     data: Record<string, unknown>,
   ) {
     try {
+      // Validar data contra esquema (true = es update parcial)
+      await this.validateRecordData(workspaceId, collectionId, data, true);
+
       const now = new Date().toISOString();
       const updateData = {
         ...data,
@@ -558,7 +626,8 @@ export class WorkspaceRecordsService {
           .whereInIds(recordIds)
           .leftJoinAndSelect('record.targetRelations', 'relation')
           .leftJoinAndSelect('relation.targetRecord', 'targetRecord')
-          .leftJoinAndSelect('relation.targetUser', 'targetUser');
+          .leftJoinAndSelect('relation.targetUser', 'targetUser')
+          .leftJoinAndSelect('relation.linkedRecord', 'linkedRecord');
 
         if (query?.orderBy) {
           const direction: 'ASC' | 'DESC' = query.orderByDirection || 'ASC';
@@ -602,8 +671,8 @@ export class WorkspaceRecordsService {
                   ...UsersService.sanitize(rel.targetUser),
                   _id: rel.targetUser.id,
                 };
-              } else if (rel.targetRecord) {
-                enrichedData[cleanKey] = rel.targetRecord.data;
+              } else if (rel.linkedRecord) {
+                enrichedData[cleanKey] = rel.linkedRecord.data;
               }
             }
           });
@@ -655,6 +724,11 @@ export class WorkspaceRecordsService {
     data: Record<string, any>[],
   ) {
     try {
+      // Validar cada item antes de procesar
+      for (const item of data) {
+        await this.validateRecordData(workspaceId, collectionId, item, false);
+      }
+
       const now = new Date().toISOString();
 
       const entities = data.map((item) => {
@@ -796,23 +870,34 @@ export class WorkspaceRecordsService {
       return;
     }
 
-    const fields = collectionNode.data.fields;
-
-    for (const field of fields) {
-      // Si el campo tiene relación y existe la data para ese campo en el objeto enviado
-      if (field.relation && data[field.name]) {
-        const targetId = data[field.name];
-        if (typeof targetId === 'string' && targetId) {
-          const relation = this.relationRepo.create({
-            targetNameRecord: field.name,
-            targetUserId: targetId,
-            targetRecordId: targetId,
+    const fieldsWithRelation = collectionNode?.data?.fields?.filter(
+      (f) => f.relation?.targetCollectionId || f.isUser,
+    );
+    if (!fieldsWithRelation) return;
+    for (const field of fieldsWithRelation) {
+      const value = data[field.name];
+      if (!value) continue;
+      if (field.isUser) {
+        const user = await this.userRepo.findOne({
+          where: { id: value as string },
+        });
+        if (user) {
+          await this.relationRepo.save({
+            targetUserId: user.id,
+            targetNameRecord: field?.name,
+            targetRecordId: savedRecord.id,
           });
-          await this.relationRepo.save(relation);
-
-          this.logger.debug(
-            `Relación creada: ${savedRecord.id} --(${field.name})--> ${targetId} (isUser: ${!!field.isUser})`,
-          );
+        }
+      } else if (field.relation?.targetCollectionId) {
+        const record = await this.recordRepo.findOne({
+          where: { id: value as string },
+        });
+        if (record) {
+          await this.relationRepo.save({
+            targetRecordId: savedRecord?.id,
+            targetNameRecord: field?.name,
+            linkedRecordId: value as string,
+          });
         }
       }
     }
