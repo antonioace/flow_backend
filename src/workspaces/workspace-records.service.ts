@@ -157,12 +157,13 @@ export class WorkspaceRecordsService {
     const fields = collectionNode.data.fields;
     const allowedFields = new Set(fields.map((f) => f.name));
     const requiredFields = fields
-      .filter((f) => f.validations?.required)
+      .filter((f) => f.validations?.required && !f.name.startsWith('_'))
       .map((f) => f.name);
 
-    // 1. Verificar campos extra (excluyendo internos del sistema)
     const incomingKeys = Object.keys(data).filter(
-      (key) => !key.startsWith('_'),
+      (key) =>
+        !['_id', '_createdAt', '_updatedAt'].includes(key) &&
+        !key.startsWith('_'),
     );
     const extraFields = incomingKeys.filter((key) => !allowedFields.has(key));
 
@@ -301,6 +302,16 @@ export class WorkspaceRecordsService {
       const updated = await this.recordRepo.findOne({
         where: { id: idRecord, workspaceId, collectionId },
       });
+
+      try {
+        await this.updateRelations(workspaceId, collectionId, data, idRecord);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Error desconocido';
+        this.logger.error(
+          `Error al actualizar relaciones para el record ${idRecord}: ${errorMessage}`,
+        );
+      }
 
       this.logger.log(
         `Record "${idRecord}" actualizado en colección "${collectionId}"`,
@@ -896,6 +907,70 @@ export class WorkspaceRecordsService {
           await this.relationRepo.save({
             targetRecordId: savedRecord?.id,
             targetNameRecord: field?.name,
+            linkedRecordId: value as string,
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Identifica campos de relación en la colección y actualiza los registros en
+   * la tabla de relaciones de records (borra y recrea para los campos enviados).
+   */
+  private async updateRelations(
+    workspaceId: string,
+    collectionId: string,
+    data: Record<string, unknown>,
+    idRecord: string,
+  ) {
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId },
+    });
+
+    if (!workspace || !workspace.nodes) return;
+
+    const nodes = workspace.nodes;
+    const collectionNode = nodes.find((node) => node.id === collectionId);
+
+    if (!collectionNode?.data?.fields) return;
+
+    const fieldsWithRelation = collectionNode.data.fields.filter(
+      (f) =>
+        (f.relation?.targetCollectionId || f.isUser) &&
+        Object.prototype.hasOwnProperty.call(data, f.name),
+    );
+
+    if (fieldsWithRelation.length === 0) return;
+
+    for (const field of fieldsWithRelation) {
+      const value = data[field.name];
+
+      await this.relationRepo.delete({
+        targetRecordId: idRecord,
+        targetNameRecord: field.name,
+      });
+      if (!value) continue;
+
+      if (field.isUser) {
+        const user = await this.userRepo.findOne({
+          where: { id: value as string },
+        });
+        if (user) {
+          await this.relationRepo.save({
+            targetUserId: user.id,
+            targetNameRecord: field.name,
+            targetRecordId: idRecord,
+          });
+        }
+      } else if (field.relation?.targetCollectionId) {
+        const record = await this.recordRepo.findOne({
+          where: { id: value as string },
+        });
+        if (record) {
+          await this.relationRepo.save({
+            targetRecordId: idRecord,
+            targetNameRecord: field.name,
             linkedRecordId: value as string,
           });
         }
