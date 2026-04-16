@@ -17,6 +17,7 @@ export enum RecordAction {
   GET = 'get',
   GET_ALL = 'getAll',
   BULK_INSERT = 'bulkInsert',
+  COUNT = 'count',
 }
 
 export class ConditionalActionDto {
@@ -29,7 +30,7 @@ export class ConditionalActionDto {
   operator: string;
 
   @IsOptional()
-  value?: any;
+  value?: unknown;
 }
 
 export class PaginationDto {

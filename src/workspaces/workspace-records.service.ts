@@ -7,7 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -113,6 +113,14 @@ export class WorkspaceRecordsService {
           workspaceId,
           idCollection,
           data as Record<string, any>[],
+        );
+
+      case RecordAction.COUNT:
+        return this.getRecordsCount(
+          workspaceId,
+          idCollection,
+          dto.conditionals,
+          dto.query,
         );
 
       default:
@@ -497,114 +505,13 @@ export class WorkspaceRecordsService {
             .map(([k]) => k)
         : [];
 
-      // Filtrado dinámico sobre la columna JSONB "data"
-      if (conditionals && conditionals.length > 0) {
-        conditionals.forEach((condition, index) => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          const { field, operator, value } = condition;
-          const paramName = `val_${index}`;
-          const fieldAccessor = `record."data"->>'${field}'`;
-
-          switch (operator) {
-            case 'equals':
-              qb.andWhere(`${fieldAccessor} = :${paramName}`, {
-                [paramName]: String(value),
-              });
-              break;
-            case 'not_equals':
-              qb.andWhere(
-                `(${fieldAccessor} != :${paramName} OR ${fieldAccessor} IS NULL)`,
-                { [paramName]: String(value) },
-              );
-              break;
-            case 'contains':
-              qb.andWhere(`${fieldAccessor} ILIKE :${paramName}`, {
-                [paramName]: `%${String(value)}%`,
-              });
-              break;
-            case 'starts_with':
-              qb.andWhere(`${fieldAccessor} ILIKE :${paramName}`, {
-                [paramName]: `${String(value)}%`,
-              });
-              break;
-            case 'ends_with':
-              qb.andWhere(`${fieldAccessor} ILIKE :${paramName}`, {
-                [paramName]: `%${String(value)}`,
-              });
-              break;
-            case 'greater_than':
-              qb.andWhere(
-                `(${fieldAccessor})::numeric > :${paramName}::numeric`,
-                { [paramName]: String(value) },
-              );
-              break;
-            case 'less_than':
-              qb.andWhere(
-                `(${fieldAccessor})::numeric < :${paramName}::numeric`,
-                { [paramName]: String(value) },
-              );
-              break;
-            case 'greater_equal':
-              qb.andWhere(
-                `(${fieldAccessor})::numeric >= :${paramName}::numeric`,
-                { [paramName]: String(value) },
-              );
-              break;
-            case 'less_equal':
-              qb.andWhere(
-                `(${fieldAccessor})::numeric <= :${paramName}::numeric`,
-                { [paramName]: String(value) },
-              );
-              break;
-            case 'before':
-              qb.andWhere(
-                `(${fieldAccessor})::timestamp < :${paramName}::timestamp`,
-                { [paramName]: String(value) },
-              );
-              break;
-            case 'after':
-              qb.andWhere(
-                `(${fieldAccessor})::timestamp > :${paramName}::timestamp`,
-                { [paramName]: String(value) },
-              );
-              break;
-            default:
-              break;
-          }
-        });
-      }
-
-      // Búsqueda global (search) sobre campos text y number del esquema
-      if (query?.search) {
-        const workspace = await this.workspaceRepo.findOne({
-          where: { id: workspaceId },
-        });
-        const collectionNode = workspace?.nodes?.find(
-          (node) => node.id === collectionId,
-        );
-        const searchableFields =
-          collectionNode?.data?.fields?.filter(
-            (f) => (f.type === 'text' || f.type === 'number') && !f.relation,
-          ) ?? [];
-
-        if (searchableFields.length > 0) {
-          const searchConditions = searchableFields
-            .map((f, i) => {
-              if (f.type === 'number') {
-                return `(record."data"->>'${f.name}')::text ILIKE :search_${i}`;
-              }
-              return `record."data"->>'${f.name}' ILIKE :search_${i}`;
-            })
-            .join(' OR ');
-
-          const searchParams: Record<string, string> = {};
-          searchableFields.forEach((_, i) => {
-            searchParams[`search_${i}`] = `%${query.search!}%`;
-          });
-
-          qb.andWhere(`(${searchConditions})`, searchParams);
-        }
-      }
+      await this.applyFilters(
+        qb,
+        workspaceId,
+        collectionId,
+        conditionals,
+        query,
+      );
 
       // Ordenamiento (orderBy)
       if (query?.orderBy) {
@@ -726,13 +633,177 @@ export class WorkspaceRecordsService {
   }
 
   /**
+   * COUNT: Retorna el número de registros que coinciden con los filtros.
+   */
+  private async getRecordsCount(
+    workspaceId: string,
+    collectionId: string,
+    conditionals?: ConditionalActionDto[],
+    query?: QueryActionDto,
+  ) {
+    try {
+      const qb = this.recordRepo
+        .createQueryBuilder('record')
+        .where('record."workspaceId" = :workspaceId', { workspaceId })
+        .andWhere('record."collectionId" = :collectionId', { collectionId });
+
+      await this.applyFilters(
+        qb,
+        workspaceId,
+        collectionId,
+        conditionals,
+        query,
+      );
+
+      const total = await qb.getCount();
+
+      return {
+        success: true,
+        action: 'count',
+        message: `Se encontraron ${total} registros.`,
+        data: total,
+      };
+    } catch (error) {
+      return await this.handleRecordError(
+        error,
+        workspaceId,
+        collectionId,
+        'count',
+      );
+    }
+  }
+
+  /**
+   * Aplica filtros dinámicos (conditionals) y búsqueda global a un QueryBuilder.
+   */
+  private async applyFilters(
+    qb: SelectQueryBuilder<WorkspaceRecord>,
+    workspaceId: string,
+    collectionId: string,
+    conditionals?: ConditionalActionDto[],
+    query?: QueryActionDto,
+  ) {
+    // Filtrado dinámico sobre la columna JSONB "data"
+    if (conditionals && conditionals.length > 0) {
+      conditionals.forEach((condition: ConditionalActionDto, index) => {
+        const { field, operator, value } = condition;
+        const paramName = `val_${index}`;
+        const fieldAccessor = `record."data"->>'${field}'`;
+
+        switch (operator) {
+          case 'equals':
+            qb.andWhere(`${fieldAccessor} = :${paramName}`, {
+              [paramName]: String(value),
+            });
+            break;
+          case 'not_equals':
+            qb.andWhere(
+              `(${fieldAccessor} != :${paramName} OR ${fieldAccessor} IS NULL)`,
+              { [paramName]: String(value) },
+            );
+            break;
+          case 'contains':
+            qb.andWhere(`${fieldAccessor} ILIKE :${paramName}`, {
+              [paramName]: `%${String(value)}%`,
+            });
+            break;
+          case 'starts_with':
+            qb.andWhere(`${fieldAccessor} ILIKE :${paramName}`, {
+              [paramName]: `${String(value)}%`,
+            });
+            break;
+          case 'ends_with':
+            qb.andWhere(`${fieldAccessor} ILIKE :${paramName}`, {
+              [paramName]: `%${String(value)}`,
+            });
+            break;
+          case 'greater_than':
+            qb.andWhere(
+              `(${fieldAccessor})::numeric > :${paramName}::numeric`,
+              {
+                [paramName]: String(value),
+              },
+            );
+            break;
+          case 'less_than':
+            qb.andWhere(
+              `(${fieldAccessor})::numeric < :${paramName}::numeric`,
+              {
+                [paramName]: String(value),
+              },
+            );
+            break;
+          case 'greater_equal':
+            qb.andWhere(
+              `(${fieldAccessor})::numeric >= :${paramName}::numeric`,
+              { [paramName]: String(value) },
+            );
+            break;
+          case 'less_equal':
+            qb.andWhere(
+              `(${fieldAccessor})::numeric <= :${paramName}::numeric`,
+              { [paramName]: String(value) },
+            );
+            break;
+          case 'before':
+            qb.andWhere(
+              `(${fieldAccessor})::timestamp < :${paramName}::timestamp`,
+              { [paramName]: String(value) },
+            );
+            break;
+          case 'after':
+            qb.andWhere(
+              `(${fieldAccessor})::timestamp > :${paramName}::timestamp`,
+              { [paramName]: String(value) },
+            );
+            break;
+          default:
+            break;
+        }
+      });
+    }
+
+    // Búsqueda global (search) sobre campos text y number del esquema
+    if (query?.search) {
+      const workspace = await this.workspaceRepo.findOne({
+        where: { id: workspaceId },
+      });
+      const collectionNode = workspace?.nodes?.find(
+        (node) => node.id === collectionId,
+      );
+      const searchableFields =
+        collectionNode?.data?.fields?.filter(
+          (f) => (f.type === 'text' || f.type === 'number') && !f.relation,
+        ) ?? [];
+
+      if (searchableFields.length > 0) {
+        const searchConditions = searchableFields
+          .map((f, i) => {
+            if (f.type === 'number') {
+              return `(record."data"->>'${f.name}')::text ILIKE :search_${i}`;
+            }
+            return `record."data"->>'${f.name}' ILIKE :search_${i}`;
+          })
+          .join(' OR ');
+
+        const searchParams: Record<string, string> = {};
+        searchableFields.forEach((_, i) => {
+          searchParams[`search_${i}`] = `%${query.search!}%`;
+        });
+
+        qb.andWhere(`(${searchConditions})`, searchParams);
+      }
+    }
+  }
+
+  /**
    * BULK_INSERT: Inserción masiva usando el insert nativo de TypeORM.
    * Genera una sola sentencia SQL INSERT optimizada.
    */
   async bulkInsert(
     workspaceId: string,
     collectionId: string,
-    data: Record<string, any>[],
+    data: Record<string, unknown>[],
   ) {
     try {
       // Validar cada item antes de procesar
@@ -982,7 +1053,7 @@ export class WorkspaceRecordsService {
    * Helper para formatear y loggear errores incluyendo nombres de Workspace y Collection
    */
   private async handleRecordError(
-    error: any,
+    error: unknown,
     workspaceId: string,
     collectionId: string,
     action: string,
